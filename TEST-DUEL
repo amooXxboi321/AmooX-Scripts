@@ -199,7 +199,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -40, 1, 0)
 title.Position = UDim2.new(0, 8, 0, 0)
 title.BackgroundTransparency = 1
-title.Text = "AmooX"
+title.Text = "AmooX Hub v1.2"
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextSize = 13
 title.Font = Enum.Font.GothamBold
@@ -514,22 +514,50 @@ local function toggleAntiDesync()
         antiDesyncConnection = RunService.Heartbeat:Connect(function()
             for _, p in ipairs(Players:GetPlayers()) do
                 if p ~= player and p.Character then
-                    local h = p.Character:FindFirstChild("HumanoidRootPart")
+                    local c = p.Character
+                    local h = c:FindFirstChild("HumanoidRootPart")
                     if h then
                         if not playerLastPositions[p.Name] then
-                            playerLastPositions[p.Name] = {pos = h.Position, time = tick()}
+                            playerLastPositions[p.Name] = {pos = h.Position, time = tick(), lastCFrame = h.CFrame}
                         end
                         
                         local lastData = playerLastPositions[p.Name]
                         local currentPos = h.Position
+                        local currentCFrame = h.CFrame
                         local timeDiff = tick() - lastData.time
                         
-                        if timeDiff > 0 then
+                        if timeDiff > 0.1 then -- Check every 0.1 seconds for consistency
                             local distance = (currentPos - lastData.pos).Magnitude
                             local speed = distance / timeDiff
                             
-                            -- Detect desync: abnormal speed (>200 studs/sec) or teleportation (>30 studs instantly)
-                            if speed > 200 or distance > 30 then
+                            -- Check for position updates that don't match movement patterns
+                            local cframeDiff = (currentCFrame.Position - lastData.lastCFrame.Position).Magnitude
+                            local positionDiff = (currentPos - lastData.pos).Magnitude
+                            
+                            -- Detect desync by comparing CFrame vs Position differences
+                            -- If they differ significantly, the client position is desynced from server
+                            local desyncDetected = math.abs(cframeDiff - positionDiff) > 3
+                            
+                            -- Also detect via velocity inconsistency
+                            local humanoid = c:FindFirstChild("Humanoid")
+                            if humanoid then
+                                local moveDirection = humanoid.MoveDirection.Magnitude
+                                local actualMovement = distance / timeDiff
+                                
+                                -- If player is "moving" but position barely changes, or vice versa
+                                if (moveDirection > 0.5 and actualMovement < 1) or (moveDirection < 0.1 and actualMovement > 50) then
+                                    desyncDetected = true
+                                end
+                            end
+                            
+                            if desyncDetected then
+                                -- Try to find client position by checking part positions directly
+                                local clientPos = currentCFrame.Position -- Client-side CFrame
+                                local serverPos = currentPos -- Server-reported position
+                                
+                                -- The real position is where the parts actually are (clientPos)
+                                local realPosition = clientPos
+                                
                                 if not antiDesyncMarkers[p.Name] then
                                     local m = Instance.new("Part")
                                     m.Name = "RealPos_" .. p.Name
@@ -551,7 +579,7 @@ local function toggleAntiDesync()
                                     local t = Instance.new("TextLabel")
                                     t.Size = UDim2.new(1, 0, 1, 0)
                                     t.BackgroundTransparency = 1
-                                    t.Text = "REAL POSITION"
+                                    t.Text = "CLIENT POSITION"
                                     t.TextColor3 = Color3.fromRGB(255, 100, 150)
                                     t.TextSize = 12
                                     t.Font = Enum.Font.GothamBold
@@ -561,7 +589,7 @@ local function toggleAntiDesync()
                                     
                                     antiDesyncMarkers[p.Name] = m
                                     
-                                    -- Create billboard banner above player
+                                    -- Create billboard banner above player's client position
                                     local banner = Instance.new("Part")
                                     banner.Name = "DesyncBanner_" .. p.Name
                                     banner.Size = Vector3.new(4, 0.5, 0.1)
@@ -602,14 +630,16 @@ local function toggleAntiDesync()
                                     desyncBanners[p.Name] = banner
                                 end
                                 
-                                -- Update positions
-                                antiDesyncMarkers[p.Name].Position = currentPos + Vector3.new(0, 1, 0)
-                                if desyncBanners[p.Name] and h then
-                                    desyncBanners[p.Name].Position = h.Position + Vector3.new(0, 5, 0)
+                                -- Update positions to track CLIENT position
+                                if antiDesyncMarkers[p.Name] then
+                                    antiDesyncMarkers[p.Name].Position = realPosition + Vector3.new(0, 1, 0)
+                                end
+                                if desyncBanners[p.Name] then
+                                    desyncBanners[p.Name].Position = realPosition + Vector3.new(0, 5, 0)
                                 end
                                 
-                                -- Keep detection active for 2 seconds
-                                task.delay(2, function()
+                                -- Keep detection active for 3 seconds
+                                task.delay(3, function()
                                     if antiDesyncMarkers[p.Name] then
                                         antiDesyncMarkers[p.Name]:Destroy()
                                         antiDesyncMarkers[p.Name] = nil
@@ -621,7 +651,7 @@ local function toggleAntiDesync()
                                 end)
                             end
                             
-                            playerLastPositions[p.Name] = {pos = currentPos, time = tick()}
+                            playerLastPositions[p.Name] = {pos = currentPos, time = tick(), lastCFrame = currentCFrame}
                         end
                     end
                 end
