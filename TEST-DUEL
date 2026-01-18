@@ -1,1 +1,553 @@
 --OFFICIAL SOURCE DO NOT LEAK
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+local humanoid = character:WaitForChild("Humanoid")
+
+local espEnabled = false
+local espConnections = {}
+local espObjects = {}
+local desyncEnabled = false
+local unwalkEnabled = false
+local unwalkConnection = nil
+local batSpamEnabled = false
+local batSpamConnection = nil
+local antiDesyncEnabled = false
+local antiDesyncConnection = nil
+local firstDesyncActivation = true
+
+local serverPosMarker = nil
+local antiDesyncMarkers = {}
+local desyncBanners = {}
+
+local FFlags = {
+    GameNetPVHeaderRotationalVelocityZeroCutoffExponent = -5000,
+    LargeReplicatorWrite5 = true,
+    LargeReplicatorEnabled9 = true,
+    AngularVelociryLimit = 360,
+    TimestepArbiterVelocityCriteriaThresholdTwoDt = 2147483646,
+    S2PhysicsSenderRate = 15000,
+    DisableDPIScale = true,
+    MaxDataPacketPerSend = 2147483647,
+    PhysicsSenderMaxBandwidthBps = 20000,
+    TimestepArbiterHumanoidLinearVelThreshold = 21,
+    MaxMissedWorldStepsRemembered = -2147483648,
+    PlayerHumanoidPropertyUpdateRestrict = true,
+    SimDefaultHumanoidTimestepMultiplier = 0,
+    StreamJobNOUVolumeLengthCap = 2147483647,
+    DebugSendDistInSteps = -2147483648,
+    GameNetDontSendRedundantNumTimes = 1,
+    CheckPVLinearVelocityIntegrateVsDeltaPositionThresholdPercent = 1,
+    CheckPVDifferencesForInterpolationMinVelThresholdStudsPerSecHundredth = 1,
+    LargeReplicatorSerializeRead3 = true,
+    ReplicationFocusNouExtentsSizeCutoffForPauseStuds = 2147483647,
+    CheckPVCachedVelThresholdPercent = 10,
+    CheckPVDifferencesForInterpolationMinRotVelThresholdRadsPerSecHundredth = 1,
+    GameNetDontSendRedundantDeltaPositionMillionth = 1,
+    InterpolationFrameVelocityThresholdMillionth = 5,
+    StreamJobNOUVolumeCap = 2147483647,
+    InterpolationFrameRotVelocityThresholdMillionth = 5,
+    CheckPVCachedRotVelThresholdPercent = 10,
+    WorldStepMax = 30,
+    InterpolationFramePositionThresholdMillionth = 5,
+    TimestepArbiterHumanoidTurningVelThreshold = 1,
+    SimOwnedNOUCountThresholdMillionth = 2147483647,
+    GameNetPVHeaderLinearVelocityZeroCutoffExponent = -5000,
+    NextGenReplicatorEnabledWrite4 = true,
+    TimestepArbiterOmegaThou = 1073741823,
+    MaxAcceptableUpdateDelay = 1,
+    LargeReplicatorSerializeWrite4 = true
+}
+
+local defaultFFlags = {
+    GameNetPVHeaderRotationalVelocityZeroCutoffExponent = 8,
+    LargeReplicatorWrite5 = false,
+    LargeReplicatorEnabled9 = false,
+    AngularVelociryLimit = 180,
+    TimestepArbiterVelocityCriteriaThresholdTwoDt = 100,
+    S2PhysicsSenderRate = 60,
+    DisableDPIScale = false,
+    MaxDataPacketPerSend = 1024,
+    PhysicsSenderMaxBandwidthBps = 10000,
+    TimestepArbiterHumanoidLinearVelThreshold = 10,
+    MaxMissedWorldStepsRemembered = 10,
+    PlayerHumanoidPropertyUpdateRestrict = false,
+    SimDefaultHumanoidTimestepMultiplier = 1,
+    StreamJobNOUVolumeLengthCap = 1000,
+    DebugSendDistInSteps = 10,
+    GameNetDontSendRedundantNumTimes = 10,
+    CheckPVLinearVelocityIntegrateVsDeltaPositionThresholdPercent = 50,
+    CheckPVDifferencesForInterpolationMinVelThresholdStudsPerSecHundredth = 100,
+    LargeReplicatorSerializeRead3 = false,
+    ReplicationFocusNouExtentsSizeCutoffForPauseStuds = 100,
+    CheckPVCachedVelThresholdPercent = 50,
+    CheckPVDifferencesForInterpolationMinRotVelThresholdRadsPerSecHundredth = 100,
+    GameNetDontSendRedundantDeltaPositionMillionth = 100,
+    InterpolationFrameVelocityThresholdMillionth = 100,
+    StreamJobNOUVolumeCap = 1000,
+    InterpolationFrameRotVelocityThresholdMillionth = 100,
+    CheckPVCachedRotVelThresholdPercent = 50,
+    WorldStepMax = 60,
+    InterpolationFramePositionThresholdMillionth = 100,
+    TimestepArbiterHumanoidTurningVelThreshold = 10,
+    SimOwnedNOUCountThresholdMillionth = 1000,
+    GameNetPVHeaderLinearVelocityZeroCutoffExponent = 8,
+    NextGenReplicatorEnabledWrite4 = false,
+    TimestepArbiterOmegaThou = 1000,
+    MaxAcceptableUpdateDelay = 10,
+    LargeReplicatorSerializeWrite4 = false
+}
+
+local function applyFFlags(flags)
+    for name, value in pairs(flags) do
+        pcall(function()
+            setfflag(tostring(name), tostring(value))
+        end)
+    end
+end
+
+local function respawn(plr)
+    local char = plr.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum:ChangeState(Enum.HumanoidStateType.Dead)
+        end
+        char:ClearAllChildren()
+        local newChar = Instance.new("Model")
+        newChar.Parent = workspace
+        plr.Character = newChar
+        task.wait()
+        plr.Character = char
+        newChar:Destroy()
+    end
+end
+
+local function createServerPosMarker()
+    if serverPosMarker then
+        serverPosMarker:Destroy()
+    end
+    
+    local initialPos = humanoidRootPart.Position
+    
+    local marker = Instance.new("Part")
+    marker.Name = "ServerPosMarker"
+    marker.Shape = Enum.PartType.Cylinder
+    marker.Size = Vector3.new(6, 3, 3)
+    marker.Material = Enum.Material.Neon
+    marker.Color = Color3.fromRGB(0, 100, 255)
+    marker.Anchored = true
+    marker.CanCollide = false
+    marker.Transparency = 0.3
+    marker.Orientation = Vector3.new(0, 0, 90)
+    marker.Position = initialPos + Vector3.new(0, 0.5, 0)
+    marker.Parent = workspace
+    
+    local billboard = Instance.new("BillboardGui")
+    billboard.Size = UDim2.new(0, 100, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.AlwaysOnTop = true
+    billboard.Parent = marker
+    
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(1, 0, 1, 0)
+    textLabel.BackgroundTransparency = 1
+    textLabel.Text = "Server POS"
+    textLabel.TextColor3 = Color3.fromRGB(0, 150, 255)
+    textLabel.TextSize = 18
+    textLabel.Font = Enum.Font.GothamBold
+    textLabel.TextStrokeTransparency = 0.3
+    textLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    textLabel.Parent = billboard
+    
+    serverPosMarker = marker
+end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.ResetOnSpawn = false
+screenGui.Parent = player:WaitForChild("PlayerGui")
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 160, 0, 180)
+mainFrame.Position = UDim2.new(0.5, -80, 0.5, -90)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 12)
+
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = Color3.fromRGB(100, 150, 255)
+mainStroke.Thickness = 2
+mainStroke.Parent = mainFrame
+
+local topBar = Instance.new("Frame")
+topBar.Size = UDim2.new(1, 0, 0, 30)
+topBar.BackgroundColor3 = Color3.fromRGB(30, 40, 60)
+topBar.BorderSizePixel = 0
+topBar.Parent = mainFrame
+
+Instance.new("UICorner", topBar).CornerRadius = UDim.new(0, 12)
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -40, 1, 0)
+title.Position = UDim2.new(0, 8, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "AmooX"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = 13
+title.Font = Enum.Font.GothamBold
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = topBar
+
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 20, 0, 20)
+closeBtn.Position = UDim2.new(1, -24, 0.5, -10)
+closeBtn.BackgroundColor3 = Color3.fromRGB(255, 80, 100)
+closeBtn.Text = "X"
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.TextSize = 12
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.Parent = topBar
+
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 5)
+
+local content = Instance.new("Frame")
+content.Size = UDim2.new(1, -12, 1, -36)
+content.Position = UDim2.new(0, 6, 0, 33)
+content.BackgroundTransparency = 1
+content.Parent = mainFrame
+
+local list = Instance.new("UIListLayout")
+list.Padding = UDim.new(0, 5)
+list.Parent = content
+
+local function createButton(text, order, color)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1, 0, 0, 28)
+    btn.BackgroundColor3 = color
+    btn.Text = text
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.TextSize = 10
+    btn.Font = Enum.Font.GothamBold
+    btn.LayoutOrder = order
+    btn.AutoButtonColor = false
+    btn.Parent = content
+    
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 7)
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 255, 255)
+    stroke.Thickness = 1.5
+    stroke.Transparency = 0.7
+    stroke.Parent = btn
+    
+    return btn
+end
+
+local desyncBtn = createButton("Desync: OFF", 1, Color3.fromRGB(50, 30, 90))
+local espBtn = createButton("ESP: OFF", 2, Color3.fromRGB(30, 70, 120))
+local unwalkBtn = createButton("No Anim: OFF", 3, Color3.fromRGB(70, 50, 30))
+local batBtn = createButton("Bat Spam: OFF", 4, Color3.fromRGB(100, 50, 30))
+local antiDesyncBtn = createButton("Anti-Desync: OFF", 5, Color3.fromRGB(80, 30, 70))
+
+local function tw(btn, on)
+    local s = btn:FindFirstChildOfClass("UIStroke")
+    if on then
+        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(0, 200, 100)}):Play()
+        TweenService:Create(s, TweenInfo.new(0.2), {Transparency = 0, Color = Color3.fromRGB(100, 255, 150)}):Play()
+    else
+        local origColor = btn.Name == "Desync" and Color3.fromRGB(50, 30, 90) or 
+                         btn.Name == "ESP" and Color3.fromRGB(30, 70, 120) or
+                         btn.Name == "Unwalk" and Color3.fromRGB(70, 50, 30) or
+                         btn.Name == "Bat" and Color3.fromRGB(100, 50, 30) or
+                         Color3.fromRGB(80, 30, 70)
+        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = origColor}):Play()
+        TweenService:Create(s, TweenInfo.new(0.2), {Transparency = 0.7, Color = Color3.fromRGB(255, 255, 255)}):Play()
+    end
+end
+
+desyncBtn.Name = "Desync"
+espBtn.Name = "ESP"
+unwalkBtn.Name = "Unwalk"
+batBtn.Name = "Bat"
+antiDesyncBtn.Name = "AntiDesync"
+
+local function toggleDesync()
+    desyncEnabled = not desyncEnabled
+    if desyncEnabled then
+        createServerPosMarker()
+        task.wait(0.05)
+        applyFFlags(FFlags)
+        if firstDesyncActivation then
+            respawn(player)
+            firstDesyncActivation = false
+        end
+        desyncBtn.Text = "Desync: ON"
+        tw(desyncBtn, true)
+    else
+        applyFFlags(defaultFFlags)
+        if serverPosMarker then serverPosMarker:Destroy() serverPosMarker = nil end
+        desyncBtn.Text = "Desync: OFF"
+        tw(desyncBtn, false)
+    end
+end
+
+local function createESP(tp)
+    if tp == player then return end
+    local function add()
+        local c = tp.Character
+        if not c then return end
+        local h = c:FindFirstChild("HumanoidRootPart")
+        if not h then return end
+        
+        local bg = Instance.new("BillboardGui")
+        bg.Name = "ESP"
+        bg.Size = UDim2.new(0, 80, 0, 40)
+        bg.StudsOffset = Vector3.new(0, 3, 0)
+        bg.AlwaysOnTop = true
+        bg.Parent = h
+        
+        local nl = Instance.new("TextLabel")
+        nl.Size = UDim2.new(1, 0, 0.5, 0)
+        nl.BackgroundTransparency = 1
+        nl.Text = tp.Name
+        nl.TextColor3 = Color3.fromRGB(100, 200, 255)
+        nl.TextSize = 11
+        nl.Font = Enum.Font.GothamBold
+        nl.TextStrokeTransparency = 0.3
+        nl.Parent = bg
+        
+        local dl = Instance.new("TextLabel")
+        dl.Size = UDim2.new(1, 0, 0.5, 0)
+        dl.Position = UDim2.new(0, 0, 0.5, 0)
+        dl.BackgroundTransparency = 1
+        dl.Text = "0"
+        dl.TextColor3 = Color3.fromRGB(255, 255, 255)
+        dl.TextSize = 9
+        dl.Font = Enum.Font.Gotham
+        dl.TextStrokeTransparency = 0.3
+        dl.Parent = bg
+        
+        local hl = Instance.new("Highlight")
+        hl.Name = "ESP"
+        hl.FillColor = Color3.fromRGB(80, 160, 255)
+        hl.OutlineColor = Color3.fromRGB(150, 200, 255)
+        hl.FillTransparency = 0.5
+        hl.OutlineTransparency = 0
+        hl.Parent = c
+        
+        local con = RunService.RenderStepped:Connect(function()
+            if not espEnabled or not c or not h or not humanoidRootPart then
+                if bg then bg:Destroy() end
+                if hl then hl:Destroy() end
+                con:Disconnect()
+                return
+            end
+            dl.Text = string.format("%.0f", (humanoidRootPart.Position - h.Position).Magnitude)
+        end)
+        
+        table.insert(espConnections, con)
+        table.insert(espObjects, {bg, hl})
+    end
+    if tp.Character then add() end
+    tp.CharacterAdded:Connect(function() if espEnabled then task.wait(0.5) add() end end)
+end
+
+local function toggleESP()
+    espEnabled = not espEnabled
+    espBtn.Text = espEnabled and "ESP: ON" or "ESP: OFF"
+    if espEnabled then
+        tw(espBtn, true)
+        for _, p in ipairs(Players:GetPlayers()) do createESP(p) end
+        Players.PlayerAdded:Connect(function(p) if espEnabled then createESP(p) end end)
+    else
+        tw(espBtn, false)
+        for _, c in ipairs(espConnections) do pcall(function() c:Disconnect() end) end
+        espConnections = {}
+        for _, o in ipairs(espObjects) do
+            for _, obj in ipairs(o) do
+                pcall(function() if obj then obj:Destroy() end end)
+            end
+        end
+        espObjects = {}
+    end
+end
+
+local function toggleUnwalk()
+    unwalkEnabled = not unwalkEnabled
+    unwalkBtn.Text = unwalkEnabled and "No Anim: ON" or "No Anim: OFF"
+    if unwalkEnabled then
+        tw(unwalkBtn, true)
+        unwalkConnection = RunService.Heartbeat:Connect(function()
+            if not humanoid or not humanoid.Parent then
+                if unwalkConnection then unwalkConnection:Disconnect() unwalkConnection = nil end
+                return
+            end
+            for _, t in ipairs(humanoid:GetPlayingAnimationTracks()) do
+                if not (t.Name:lower():find("idle") or t.Animation.AnimationId:lower():find("idle")) then
+                    t:Stop()
+                end
+            end
+        end)
+    else
+        tw(unwalkBtn, false)
+        if unwalkConnection then unwalkConnection:Disconnect() unwalkConnection = nil end
+    end
+end
+
+local function toggleBat()
+    batSpamEnabled = not batSpamEnabled
+    batBtn.Text = batSpamEnabled and "Bat Spam: ON" or "Bat Spam: OFF"
+    if batSpamEnabled then
+        tw(batBtn, true)
+        batSpamConnection = RunService.Heartbeat:Connect(function()
+            if not character or not humanoid then return end
+            local bat = character:FindFirstChild("Bat") or player.Backpack:FindFirstChild("Bat")
+            if bat and bat:IsA("Tool") then
+                if bat.Parent == player.Backpack then humanoid:EquipTool(bat) end
+                for i = 1, 8 do pcall(function() bat:Activate() end) end
+                for _, v in pairs(bat:GetDescendants()) do
+                    if v:IsA("NumberValue") or v:IsA("IntValue") then
+                        if v.Name:lower():find("cool") or v.Name:lower():find("delay") then v.Value = 0 end
+                    end
+                    if v:IsA("RemoteEvent") then pcall(function() v:FireServer() end)
+                    elseif v:IsA("RemoteFunction") then pcall(function() v:InvokeServer() end) end
+                end
+            end
+        end)
+    else
+        tw(batBtn, false)
+        if batSpamConnection then batSpamConnection:Disconnect() batSpamConnection = nil end
+    end
+end
+
+local playerLastPositions = {}
+
+local function toggleAntiDesync()
+    antiDesyncEnabled = not antiDesyncEnabled
+    antiDesyncBtn.Text = antiDesyncEnabled and "Anti-Desync: ON" or "Anti-Desync: OFF"
+    if antiDesyncEnabled then
+        tw(antiDesyncBtn, true)
+        antiDesyncConnection = RunService.Heartbeat:Connect(function()
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= player and p.Character then
+                    local h = p.Character:FindFirstChild("HumanoidRootPart")
+                    if h then
+                        if not playerLastPositions[p.Name] then
+                            playerLastPositions[p.Name] = h.Position
+                        end
+                        
+                        local lastPos = playerLastPositions[p.Name]
+                        local currentPos = h.Position
+                        local distance = (currentPos - lastPos).Magnitude
+                        
+                        -- Detect desync: if player moved more than 50 studs in one frame
+                        if distance > 50 then
+                            if not antiDesyncMarkers[p.Name] then
+                                local m = Instance.new("Part")
+                                m.Name = "RealPos"
+                                m.Shape = Enum.PartType.Ball
+                                m.Size = Vector3.new(2, 2, 2)
+                                m.Material = Enum.Material.Neon
+                                m.Color = Color3.fromRGB(255, 50, 100)
+                                m.Anchored = true
+                                m.CanCollide = false
+                                m.Transparency = 0.4
+                                m.Parent = workspace
+                                
+                                local b = Instance.new("BillboardGui")
+                                b.Size = UDim2.new(0, 100, 0, 30)
+                                b.StudsOffset = Vector3.new(0, 2, 0)
+                                b.AlwaysOnTop = true
+                                b.Parent = m
+                                
+                                local t = Instance.new("TextLabel")
+                                t.Size = UDim2.new(1, 0, 1, 0)
+                                t.BackgroundTransparency = 1
+                                t.Text = "REAL POS"
+                                t.TextColor3 = Color3.fromRGB(255, 100, 150)
+                                t.TextSize = 14
+                                t.Font = Enum.Font.GothamBold
+                                t.TextStrokeTransparency = 0.2
+                                t.Parent = b
+                                
+                                antiDesyncMarkers[p.Name] = m
+                                
+                                local bn = Instance.new("Frame")
+                                bn.Size = UDim2.new(0, 180, 0, 25)
+                                bn.Position = UDim2.new(0.5, -90, 0, 10)
+                                bn.BackgroundColor3 = Color3.fromRGB(255, 50, 100)
+                                bn.BorderSizePixel = 0
+                                bn.Parent = screenGui
+                                Instance.new("UICorner", bn).CornerRadius = UDim.new(0, 8)
+                                
+                                local bt = Instance.new("TextLabel")
+                                bt.Size = UDim2.new(1, 0, 1, 0)
+                                bt.BackgroundTransparency = 1
+                                bt.Text = "⚠️ " .. p.Name .. " DESYNCING"
+                                bt.TextColor3 = Color3.fromRGB(255, 255, 255)
+                                bt.TextSize = 11
+                                bt.Font = Enum.Font.GothamBold
+                                bt.Parent = bn
+                                
+                                desyncBanners[p.Name] = bn
+                            end
+                            antiDesyncMarkers[p.Name].Position = currentPos + Vector3.new(0, 1, 0)
+                        else
+                            if antiDesyncMarkers[p.Name] then
+                                antiDesyncMarkers[p.Name]:Destroy()
+                                antiDesyncMarkers[p.Name] = nil
+                            end
+                            if desyncBanners[p.Name] then
+                                desyncBanners[p.Name]:Destroy()
+                                desyncBanners[p.Name] = nil
+                            end
+                        end
+                        
+                        playerLastPositions[p.Name] = currentPos
+                    end
+                end
+            end
+        end)
+    else
+        tw(antiDesyncBtn, false)
+        if antiDesyncConnection then antiDesyncConnection:Disconnect() antiDesyncConnection = nil end
+        for _, m in pairs(antiDesyncMarkers) do pcall(function() m:Destroy() end) end
+        antiDesyncMarkers = {}
+        for _, b in pairs(desyncBanners) do pcall(function() b:Destroy() end) end
+        desyncBanners = {}
+        playerLastPositions = {}
+    end
+end
+
+desyncBtn.MouseButton1Click:Connect(toggleDesync)
+espBtn.MouseButton1Click:Connect(toggleESP)
+unwalkBtn.MouseButton1Click:Connect(toggleUnwalk)
+batBtn.MouseButton1Click:Connect(toggleBat)
+antiDesyncBtn.MouseButton1Click:Connect(toggleAntiDesync)
+
+closeBtn.MouseButton1Click:Connect(function()
+    TweenService:Create(mainFrame, TweenInfo.new(0.15), {Size = UDim2.new(0, 0, 0, 0)}):Play()
+    task.wait(0.15)
+    screenGui:Destroy()
+end)
+
+player.CharacterAdded:Connect(function(nc)
+    character = nc
+    humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+    humanoid = character:WaitForChild("Humanoid")
+    if unwalkEnabled then unwalkEnabled = false toggleUnwalk() end
+    if batSpamEnabled then batSpamEnabled = false toggleBat() end
+    if desyncEnabled then
+        if serverPosMarker then serverPosMarker:Destroy() end
+        task.wait(0.5)
+        createServerPosMarker()
+    end
+end)
