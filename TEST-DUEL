@@ -172,8 +172,8 @@ screenGui.ResetOnSpawn = false
 screenGui.Parent = player:WaitForChild("PlayerGui")
 
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 160, 0, 180)
-mainFrame.Position = UDim2.new(0.5, -80, 0.5, -90)
+mainFrame.Size = UDim2.new(0, 165, 0, 195)
+mainFrame.Position = UDim2.new(0.5, -82.5, 0.5, -97.5)
 mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
@@ -219,8 +219,8 @@ closeBtn.Parent = topBar
 Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 5)
 
 local content = Instance.new("Frame")
-content.Size = UDim2.new(1, -12, 1, -36)
-content.Position = UDim2.new(0, 6, 0, 33)
+content.Size = UDim2.new(1, -16, 1, -38)
+content.Position = UDim2.new(0, 8, 0, 34)
 content.BackgroundTransparency = 1
 content.Parent = mainFrame
 
@@ -428,9 +428,85 @@ local function toggleBat()
     end
 end
 
+local blockedUsers = {
+    "FatCatcute1234",
+    "FatCatcute1235",
+    "fatcatcute1234",
+    "Fatcatcute1234",
+    "Fatcatcute1235",
+    "fatcatcute1235"
+}
+
+local function isUserBlocked()
+    for _, username in ipairs(blockedUsers) do
+        if player.Name == username then
+            return true
+        end
+    end
+    return false
+end
+
+local function showBlockedPopup()
+    local popup = Instance.new("Frame")
+    popup.Size = UDim2.new(0, 250, 0, 100)
+    popup.Position = UDim2.new(0.5, -125, 0.5, -50)
+    popup.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    popup.BorderSizePixel = 0
+    popup.ZIndex = 10
+    popup.Parent = screenGui
+    
+    Instance.new("UICorner", popup).CornerRadius = UDim.new(0, 12)
+    
+    local popupStroke = Instance.new("UIStroke")
+    popupStroke.Color = Color3.fromRGB(255, 50, 100)
+    popupStroke.Thickness = 2
+    popupStroke.Parent = popup
+    
+    local popupTitle = Instance.new("TextLabel")
+    popupTitle.Size = UDim2.new(1, 0, 0, 30)
+    popupTitle.BackgroundTransparency = 1
+    popupTitle.Text = "Access Denied"
+    popupTitle.TextColor3 = Color3.fromRGB(255, 100, 100)
+    popupTitle.TextSize = 14
+    popupTitle.Font = Enum.Font.GothamBold
+    popupTitle.Parent = popup
+    
+    local popupMsg = Instance.new("TextLabel")
+    popupMsg.Size = UDim2.new(1, -20, 0, 40)
+    popupMsg.Position = UDim2.new(0, 10, 0, 30)
+    popupMsg.BackgroundTransparency = 1
+    popupMsg.Text = "You are blocked from using\nAnti-Desync feature."
+    popupMsg.TextColor3 = Color3.fromRGB(255, 255, 255)
+    popupMsg.TextSize = 11
+    popupMsg.Font = Enum.Font.Gotham
+    popupMsg.TextWrapped = true
+    popupMsg.Parent = popup
+    
+    local popupClose = Instance.new("TextButton")
+    popupClose.Size = UDim2.new(0, 80, 0, 25)
+    popupClose.Position = UDim2.new(0.5, -40, 1, -30)
+    popupClose.BackgroundColor3 = Color3.fromRGB(255, 80, 100)
+    popupClose.Text = "Close"
+    popupClose.TextColor3 = Color3.fromRGB(255, 255, 255)
+    popupClose.TextSize = 11
+    popupClose.Font = Enum.Font.GothamBold
+    popupClose.Parent = popup
+    
+    Instance.new("UICorner", popupClose).CornerRadius = UDim.new(0, 6)
+    
+    popupClose.MouseButton1Click:Connect(function()
+        popup:Destroy()
+    end)
+end
+
 local playerLastPositions = {}
 
 local function toggleAntiDesync()
+    if isUserBlocked() then
+        showBlockedPopup()
+        return
+    end
+    
     antiDesyncEnabled = not antiDesyncEnabled
     antiDesyncBtn.Text = antiDesyncEnabled and "Anti-Desync: ON" or "Anti-Desync: OFF"
     if antiDesyncEnabled then
@@ -441,77 +517,112 @@ local function toggleAntiDesync()
                     local h = p.Character:FindFirstChild("HumanoidRootPart")
                     if h then
                         if not playerLastPositions[p.Name] then
-                            playerLastPositions[p.Name] = h.Position
+                            playerLastPositions[p.Name] = {pos = h.Position, time = tick()}
                         end
                         
-                        local lastPos = playerLastPositions[p.Name]
+                        local lastData = playerLastPositions[p.Name]
                         local currentPos = h.Position
-                        local distance = (currentPos - lastPos).Magnitude
+                        local timeDiff = tick() - lastData.time
                         
-                        -- Detect desync: if player moved more than 50 studs in one frame
-                        if distance > 50 then
-                            if not antiDesyncMarkers[p.Name] then
-                                local m = Instance.new("Part")
-                                m.Name = "RealPos"
-                                m.Shape = Enum.PartType.Ball
-                                m.Size = Vector3.new(2, 2, 2)
-                                m.Material = Enum.Material.Neon
-                                m.Color = Color3.fromRGB(255, 50, 100)
-                                m.Anchored = true
-                                m.CanCollide = false
-                                m.Transparency = 0.4
-                                m.Parent = workspace
+                        if timeDiff > 0 then
+                            local distance = (currentPos - lastData.pos).Magnitude
+                            local speed = distance / timeDiff
+                            
+                            -- Detect desync: abnormal speed (>200 studs/sec) or teleportation (>30 studs instantly)
+                            if speed > 200 or distance > 30 then
+                                if not antiDesyncMarkers[p.Name] then
+                                    local m = Instance.new("Part")
+                                    m.Name = "RealPos_" .. p.Name
+                                    m.Shape = Enum.PartType.Ball
+                                    m.Size = Vector3.new(3, 3, 3)
+                                    m.Material = Enum.Material.Neon
+                                    m.Color = Color3.fromRGB(255, 50, 100)
+                                    m.Anchored = true
+                                    m.CanCollide = false
+                                    m.Transparency = 0.3
+                                    m.Parent = workspace
+                                    
+                                    local b = Instance.new("BillboardGui")
+                                    b.Size = UDim2.new(0, 120, 0, 35)
+                                    b.StudsOffset = Vector3.new(0, 2.5, 0)
+                                    b.AlwaysOnTop = true
+                                    b.Parent = m
+                                    
+                                    local t = Instance.new("TextLabel")
+                                    t.Size = UDim2.new(1, 0, 1, 0)
+                                    t.BackgroundTransparency = 1
+                                    t.Text = "REAL POSITION"
+                                    t.TextColor3 = Color3.fromRGB(255, 100, 150)
+                                    t.TextSize = 12
+                                    t.Font = Enum.Font.GothamBold
+                                    t.TextStrokeTransparency = 0
+                                    t.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                                    t.Parent = b
+                                    
+                                    antiDesyncMarkers[p.Name] = m
+                                    
+                                    -- Create billboard banner above player
+                                    local banner = Instance.new("Part")
+                                    banner.Name = "DesyncBanner_" .. p.Name
+                                    banner.Size = Vector3.new(4, 0.5, 0.1)
+                                    banner.Transparency = 1
+                                    banner.CanCollide = false
+                                    banner.Anchored = true
+                                    banner.Parent = workspace
+                                    
+                                    local bannerGui = Instance.new("BillboardGui")
+                                    bannerGui.Size = UDim2.new(0, 200, 0, 30)
+                                    bannerGui.StudsOffset = Vector3.new(0, 5, 0)
+                                    bannerGui.AlwaysOnTop = true
+                                    bannerGui.Parent = banner
+                                    
+                                    local bannerFrame = Instance.new("Frame")
+                                    bannerFrame.Size = UDim2.new(1, 0, 1, 0)
+                                    bannerFrame.BackgroundColor3 = Color3.fromRGB(255, 50, 100)
+                                    bannerFrame.BorderSizePixel = 0
+                                    bannerFrame.Parent = bannerGui
+                                    
+                                    Instance.new("UICorner", bannerFrame).CornerRadius = UDim.new(0, 8)
+                                    
+                                    local bannerStroke = Instance.new("UIStroke")
+                                    bannerStroke.Color = Color3.fromRGB(255, 150, 180)
+                                    bannerStroke.Thickness = 2
+                                    bannerStroke.Parent = bannerFrame
+                                    
+                                    local bannerText = Instance.new("TextLabel")
+                                    bannerText.Size = UDim2.new(1, 0, 1, 0)
+                                    bannerText.BackgroundTransparency = 1
+                                    bannerText.Text = "⚠️ " .. p.Name .. " IS DESYNCING!"
+                                    bannerText.TextColor3 = Color3.fromRGB(255, 255, 255)
+                                    bannerText.TextSize = 12
+                                    bannerText.Font = Enum.Font.GothamBold
+                                    bannerText.TextStrokeTransparency = 0.3
+                                    bannerText.Parent = bannerFrame
+                                    
+                                    desyncBanners[p.Name] = banner
+                                end
                                 
-                                local b = Instance.new("BillboardGui")
-                                b.Size = UDim2.new(0, 100, 0, 30)
-                                b.StudsOffset = Vector3.new(0, 2, 0)
-                                b.AlwaysOnTop = true
-                                b.Parent = m
+                                -- Update positions
+                                antiDesyncMarkers[p.Name].Position = currentPos + Vector3.new(0, 1, 0)
+                                if desyncBanners[p.Name] and h then
+                                    desyncBanners[p.Name].Position = h.Position + Vector3.new(0, 5, 0)
+                                end
                                 
-                                local t = Instance.new("TextLabel")
-                                t.Size = UDim2.new(1, 0, 1, 0)
-                                t.BackgroundTransparency = 1
-                                t.Text = "REAL POS"
-                                t.TextColor3 = Color3.fromRGB(255, 100, 150)
-                                t.TextSize = 14
-                                t.Font = Enum.Font.GothamBold
-                                t.TextStrokeTransparency = 0.2
-                                t.Parent = b
-                                
-                                antiDesyncMarkers[p.Name] = m
-                                
-                                local bn = Instance.new("Frame")
-                                bn.Size = UDim2.new(0, 180, 0, 25)
-                                bn.Position = UDim2.new(0.5, -90, 0, 10)
-                                bn.BackgroundColor3 = Color3.fromRGB(255, 50, 100)
-                                bn.BorderSizePixel = 0
-                                bn.Parent = screenGui
-                                Instance.new("UICorner", bn).CornerRadius = UDim.new(0, 8)
-                                
-                                local bt = Instance.new("TextLabel")
-                                bt.Size = UDim2.new(1, 0, 1, 0)
-                                bt.BackgroundTransparency = 1
-                                bt.Text = "⚠️ " .. p.Name .. " DESYNCING"
-                                bt.TextColor3 = Color3.fromRGB(255, 255, 255)
-                                bt.TextSize = 11
-                                bt.Font = Enum.Font.GothamBold
-                                bt.Parent = bn
-                                
-                                desyncBanners[p.Name] = bn
+                                -- Keep detection active for 2 seconds
+                                task.delay(2, function()
+                                    if antiDesyncMarkers[p.Name] then
+                                        antiDesyncMarkers[p.Name]:Destroy()
+                                        antiDesyncMarkers[p.Name] = nil
+                                    end
+                                    if desyncBanners[p.Name] then
+                                        desyncBanners[p.Name]:Destroy()
+                                        desyncBanners[p.Name] = nil
+                                    end
+                                end)
                             end
-                            antiDesyncMarkers[p.Name].Position = currentPos + Vector3.new(0, 1, 0)
-                        else
-                            if antiDesyncMarkers[p.Name] then
-                                antiDesyncMarkers[p.Name]:Destroy()
-                                antiDesyncMarkers[p.Name] = nil
-                            end
-                            if desyncBanners[p.Name] then
-                                desyncBanners[p.Name]:Destroy()
-                                desyncBanners[p.Name] = nil
-                            end
+                            
+                            playerLastPositions[p.Name] = {pos = currentPos, time = tick()}
                         end
-                        
-                        playerLastPositions[p.Name] = currentPos
                     end
                 end
             end
