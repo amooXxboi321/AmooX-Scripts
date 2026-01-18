@@ -1,0 +1,699 @@
+--OFFICIAL SOURCE DO NOT LEAK
+-- Velocity-safe script with proper memory management
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+local humanoid = character:WaitForChild("Humanoid")
+
+-- State variables
+local espEnabled, desyncEnabled, unwalkEnabled, batSpamEnabled, antiDesyncEnabled = false, false, false, false, false
+local espConnections, espObjects, antiDesyncMarkers, desyncBanners = {}, {}, {}, {}
+local unwalkConnection, batSpamConnection, antiDesyncConnection = nil, nil, nil
+local firstDesyncActivation, serverPosMarker = true, nil
+local playerHistory = {}
+
+-- Blacklist
+local blacklist = {
+    fatcatcute1234 = true,
+    Fatcatcute1234 = true,
+    fatcatcute1235 = true,
+    Fatcatcute1235 = true
+}
+
+-- Safer FFlags (reduced extreme values to prevent crashes)
+local FFlags = {
+    GameNetPVHeaderRotationalVelocityZeroCutoffExponent = -5000,
+    GameNetPVHeaderLinearVelocityZeroCutoffExponent = -5000,
+    S2PhysicsSenderRate = 15000,
+    PhysicsSenderMaxBandwidthBps = 20000,
+    TimestepArbiterHumanoidLinearVelThreshold = 21,
+    LargeReplicatorWrite5 = true,
+    LargeReplicatorEnabled9 = true,
+    NextGenReplicatorEnabledWrite4 = true,
+    LargeReplicatorSerializeWrite4 = true,
+    LargeReplicatorSerializeRead3 = true
+}
+
+local defaultFFlags = {
+    GameNetPVHeaderRotationalVelocityZeroCutoffExponent = 8,
+    GameNetPVHeaderLinearVelocityZeroCutoffExponent = 8,
+    S2PhysicsSenderRate = 60,
+    PhysicsSenderMaxBandwidthBps = 10000,
+    TimestepArbiterHumanoidLinearVelThreshold = 10,
+    LargeReplicatorWrite5 = false,
+    LargeReplicatorEnabled9 = false,
+    NextGenReplicatorEnabledWrite4 = false,
+    LargeReplicatorSerializeWrite4 = false,
+    LargeReplicatorSerializeRead3 = false
+}
+
+local function applyFFlags(flags)
+    for n, v in pairs(flags) do
+        task.spawn(function()
+            pcall(function()
+                if setfflag then
+                    setfflag(tostring(n), tostring(v))
+                end
+            end)
+        end)
+    end
+end
+
+local function respawn(p)
+    task.spawn(function()
+        pcall(function()
+            if p.Character then
+                local h = p.Character:FindFirstChildOfClass("Humanoid")
+                if h then
+                    h.Health = 0
+                end
+            end
+        end)
+    end)
+end
+
+local function createServerPosMarker()
+    task.spawn(function()
+        pcall(function()
+            if serverPosMarker then
+                serverPosMarker:Destroy()
+                serverPosMarker = nil
+            end
+        end)
+        
+        pcall(function()
+            local m = Instance.new("Part")
+            m.Name = "ServerPosMarker"
+            m.Shape = Enum.PartType.Cylinder
+            m.Size = Vector3.new(6, 3, 3)
+            m.Material = Enum.Material.Neon
+            m.Color = Color3.fromRGB(0, 100, 255)
+            m.Anchored = true
+            m.CanCollide = false
+            m.Transparency = 0.3
+            m.Orientation = Vector3.new(0, 0, 90)
+            m.Position = humanoidRootPart.Position + Vector3.new(0, 0.5, 0)
+            m.Parent = workspace
+            
+            local b = Instance.new("BillboardGui")
+            b.Size = UDim2.new(0, 100, 0, 50)
+            b.StudsOffset = Vector3.new(0, 3, 0)
+            b.AlwaysOnTop = true
+            b.Parent = m
+            
+            local t = Instance.new("TextLabel")
+            t.Size = UDim2.new(1, 0, 1, 0)
+            t.BackgroundTransparency = 1
+            t.Text = "Server POS"
+            t.TextColor3 = Color3.fromRGB(0, 150, 255)
+            t.TextSize = 18
+            t.Font = Enum.Font.GothamBold
+            t.TextStrokeTransparency = 0.3
+            t.TextStrokeColor3 = Color3.new(0, 0, 0)
+            t.Parent = b
+            
+            serverPosMarker = m
+        end)
+    end)
+end
+
+-- UI Creation
+local sg = Instance.new("ScreenGui")
+sg.Name = "AmooXHub"
+sg.ResetOnSpawn = false
+sg.Parent = player:WaitForChild("PlayerGui")
+
+local mf = Instance.new("Frame")
+mf.Size = UDim2.new(0, 220, 0, 240)
+mf.Position = UDim2.new(0.5, -110, 0.5, -120)
+mf.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+mf.BorderSizePixel = 0
+mf.Active = true
+mf.Draggable = true
+mf.Parent = sg
+
+Instance.new("UICorner", mf).CornerRadius = UDim.new(0, 12)
+
+local ms = Instance.new("UIStroke")
+ms.Color = Color3.fromRGB(100, 150, 255)
+ms.Thickness = 2
+ms.Parent = mf
+
+local tb = Instance.new("Frame")
+tb.Size = UDim2.new(1, 0, 0, 40)
+tb.BackgroundColor3 = Color3.fromRGB(30, 35, 50)
+tb.BorderSizePixel = 0
+tb.Parent = mf
+
+Instance.new("UICorner", tb).CornerRadius = UDim.new(0, 12)
+
+local tl = Instance.new("TextLabel")
+tl.Size = UDim2.new(1, -60, 1, 0)
+tl.Position = UDim2.new(0, 10, 0, 0)
+tl.BackgroundTransparency = 1
+tl.Text = "⚡ AmooX Hub"
+tl.TextColor3 = Color3.fromRGB(255, 255, 255)
+tl.TextSize = 16
+tl.Font = Enum.Font.GothamBold
+tl.TextXAlignment = Enum.TextXAlignment.Left
+tl.Parent = tb
+
+local mb = Instance.new("TextButton")
+mb.Size = UDim2.new(0, 25, 0, 25)
+mb.Position = UDim2.new(1, -50, 0.5, -12.5)
+mb.BackgroundColor3 = Color3.fromRGB(255, 200, 50)
+mb.Text = "─"
+mb.TextColor3 = Color3.new(0, 0, 0)
+mb.TextSize = 14
+mb.Font = Enum.Font.GothamBold
+mb.BorderSizePixel = 0
+mb.Parent = tb
+
+Instance.new("UICorner", mb).CornerRadius = UDim.new(0, 6)
+
+local cb = Instance.new("TextButton")
+cb.Size = UDim2.new(0, 25, 0, 25)
+cb.Position = UDim2.new(1, -22, 0.5, -12.5)
+cb.BackgroundColor3 = Color3.fromRGB(255, 80, 100)
+cb.Text = "✕"
+cb.TextColor3 = Color3.fromRGB(255, 255, 255)
+cb.TextSize = 14
+cb.Font = Enum.Font.GothamBold
+cb.BorderSizePixel = 0
+cb.Parent = tb
+
+Instance.new("UICorner", cb).CornerRadius = UDim.new(0, 6)
+
+local cf = Instance.new("Frame")
+cf.Size = UDim2.new(1, -20, 1, -50)
+cf.Position = UDim2.new(0, 10, 0, 45)
+cf.BackgroundTransparency = 1
+cf.Parent = mf
+
+local ll = Instance.new("UIListLayout")
+ll.SortOrder = Enum.SortOrder.LayoutOrder
+ll.Padding = UDim.new(0, 8)
+ll.Parent = cf
+
+local function createButton(text, order, color)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, 0, 0, 35)
+    b.BackgroundColor3 = color
+    b.Text = text
+    b.TextColor3 = Color3.fromRGB(255, 255, 255)
+    b.TextSize = 12
+    b.Font = Enum.Font.GothamBold
+    b.LayoutOrder = order
+    b.BorderSizePixel = 0
+    b.AutoButtonColor = false
+    b.Parent = cf
+    
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+    
+    local s = Instance.new("UIStroke")
+    s.Color = Color3.fromRGB(255, 255, 255)
+    s.Thickness = 1.5
+    s.Transparency = 0.7
+    s.Parent = b
+    
+    return b
+end
+
+local db = createButton("Desync: OFF", 1, Color3.fromRGB(60, 40, 100))
+local eb = createButton("ESP: OFF", 2, Color3.fromRGB(40, 80, 130))
+local ub = createButton("No Anim: OFF", 3, Color3.fromRGB(80, 60, 40))
+local bb = createButton("Bat Spam: OFF", 4, Color3.fromRGB(110, 60, 40))
+local ab = createButton("Anti-Desync: OFF", 5, Color3.fromRGB(100, 40, 80))
+
+local function updateButton(btn, enabled)
+    local s = btn:FindFirstChildOfClass("UIStroke")
+    if enabled then
+        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(80, 255, 140)}):Play()
+        TweenService:Create(s, TweenInfo.new(0.2), {Transparency = 0, Color = Color3.fromRGB(150, 255, 200)}):Play()
+    else
+        local originalColor = btn.Name == "Desync" and Color3.fromRGB(60, 40, 100) or
+                              btn.Name == "ESP" and Color3.fromRGB(40, 80, 130) or
+                              btn.Name == "NoAnim" and Color3.fromRGB(80, 60, 40) or
+                              btn.Name == "BatSpam" and Color3.fromRGB(110, 60, 40) or
+                              Color3.fromRGB(100, 40, 80)
+        TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundColor3 = originalColor}):Play()
+        TweenService:Create(s, TweenInfo.new(0.2), {Transparency = 0.7, Color = Color3.fromRGB(255, 255, 255)}):Play()
+    end
+end
+
+db.Name = "Desync"
+eb.Name = "ESP"
+ub.Name = "NoAnim"
+bb.Name = "BatSpam"
+ab.Name = "AntiDesync"
+
+local function toggleDesync()
+    desyncEnabled = not desyncEnabled
+    db.Text = desyncEnabled and "Desync: ON" or "Desync: OFF"
+    updateButton(db, desyncEnabled)
+    
+    if desyncEnabled then
+        createServerPosMarker()
+        task.wait(0.05)
+        applyFFlags(FFlags)
+        if firstDesyncActivation then
+            respawn(player)
+            firstDesyncActivation = false
+        end
+    else
+        applyFFlags(defaultFFlags)
+        task.spawn(function()
+            pcall(function()
+                if serverPosMarker then
+                    serverPosMarker:Destroy()
+                    serverPosMarker = nil
+                end
+            end)
+        end)
+    end
+end
+
+local function createESP(tp)
+    if tp == player then return end
+    
+    local function add()
+        task.spawn(function()
+            pcall(function()
+                local c = tp.Character
+                if not c then return end
+                local h = c:FindFirstChild("HumanoidRootPart")
+                if not h then return end
+                
+                local bg = Instance.new("BillboardGui")
+                bg.Name = "ESP"
+                bg.Size = UDim2.new(0, 100, 0, 50)
+                bg.StudsOffset = Vector3.new(0, 3.5, 0)
+                bg.AlwaysOnTop = true
+                bg.Parent = h
+                
+                local nl = Instance.new("TextLabel")
+                nl.Size = UDim2.new(1, 0, 0.5, 0)
+                nl.BackgroundTransparency = 1
+                nl.Text = tp.Name
+                nl.TextColor3 = Color3.fromRGB(120, 220, 255)
+                nl.TextSize = 13
+                nl.Font = Enum.Font.GothamBold
+                nl.TextStrokeTransparency = 0.2
+                nl.Parent = bg
+                
+                local dl = Instance.new("TextLabel")
+                dl.Size = UDim2.new(1, 0, 0.5, 0)
+                dl.Position = UDim2.new(0, 0, 0.5, 0)
+                dl.BackgroundTransparency = 1
+                dl.Text = "0"
+                dl.TextColor3 = Color3.fromRGB(255, 255, 255)
+                dl.TextSize = 11
+                dl.Font = Enum.Font.Gotham
+                dl.TextStrokeTransparency = 0.3
+                dl.Parent = bg
+                
+                local hl = Instance.new("Highlight")
+                hl.Name = "ESP"
+                hl.FillColor = Color3.fromRGB(80, 160, 255)
+                hl.OutlineColor = Color3.fromRGB(150, 200, 255)
+                hl.FillTransparency = 0.5
+                hl.OutlineTransparency = 0
+                hl.Parent = c
+                
+                local con = RunService.RenderStepped:Connect(function()
+                    if not espEnabled or not c or not h or not humanoidRootPart then
+                        pcall(function() bg:Destroy() end)
+                        pcall(function() hl:Destroy() end)
+                        con:Disconnect()
+                        return
+                    end
+                    
+                    pcall(function()
+                        local dist = (humanoidRootPart.Position - h.Position).Magnitude
+                        dl.Text = string.format("%.0f", dist)
+                    end)
+                end)
+                
+                table.insert(espConnections, con)
+                table.insert(espObjects, {bg, hl})
+            end)
+        end)
+    end
+    
+    if tp.Character then add() end
+    tp.CharacterAdded:Connect(function()
+        if espEnabled then
+            task.wait(0.5)
+            add()
+        end
+    end)
+end
+
+local function toggleESP()
+    espEnabled = not espEnabled
+    eb.Text = espEnabled and "ESP: ON" or "ESP: OFF"
+    updateButton(eb, espEnabled)
+    
+    if espEnabled then
+        for _, p in ipairs(Players:GetPlayers()) do
+            createESP(p)
+        end
+        Players.PlayerAdded:Connect(function(p)
+            if espEnabled then createESP(p) end
+        end)
+    else
+        for _, c in ipairs(espConnections) do
+            task.spawn(function() pcall(function() c:Disconnect() end) end)
+        end
+        espConnections = {}
+        for _, o in ipairs(espObjects) do
+            for _, obj in ipairs(o) do
+                task.spawn(function() pcall(function() if obj then obj:Destroy() end end) end)
+            end
+        end
+        espObjects = {}
+    end
+end
+
+local function toggleUnwalk()
+    unwalkEnabled = not unwalkEnabled
+    ub.Text = unwalkEnabled and "No Anim: ON" or "No Anim: OFF"
+    updateButton(ub, unwalkEnabled)
+    
+    if unwalkEnabled then
+        unwalkConnection = RunService.Heartbeat:Connect(function()
+            if not humanoid or not humanoid.Parent then
+                if unwalkConnection then
+                    unwalkConnection:Disconnect()
+                    unwalkConnection = nil
+                end
+                return
+            end
+            
+            task.spawn(function()
+                pcall(function()
+                    for _, t in ipairs(humanoid:GetPlayingAnimationTracks()) do
+                        if not (t.Name:lower():find("idle") or (t.Animation and t.Animation.AnimationId:lower():find("idle"))) then
+                            t:Stop()
+                        end
+                    end
+                end)
+            end)
+        end)
+    else
+        if unwalkConnection then
+            unwalkConnection:Disconnect()
+            unwalkConnection = nil
+        end
+    end
+end
+
+local function toggleBat()
+    batSpamEnabled = not batSpamEnabled
+    bb.Text = batSpamEnabled and "Bat Spam: ON" or "Bat Spam: OFF"
+    updateButton(bb, batSpamEnabled)
+    
+    if batSpamEnabled then
+        batSpamConnection = RunService.Heartbeat:Connect(function()
+            if not character or not humanoid then return end
+            
+            task.spawn(function()
+                pcall(function()
+                    local bat = character:FindFirstChild("Bat") or player.Backpack:FindFirstChild("Bat")
+                    
+                    if bat and bat:IsA("Tool") then
+                        if bat.Parent == player.Backpack then
+                            humanoid:EquipTool(bat)
+                        end
+                        
+                        for i = 1, 5 do
+                            bat:Activate()
+                        end
+                        
+                        for _, v in pairs(bat:GetDescendants()) do
+                            if v:IsA("NumberValue") or v:IsA("IntValue") then
+                                if v.Name:lower():find("cool") or v.Name:lower():find("delay") then
+                                    v.Value = 0
+                                end
+                            end
+                        end
+                    end
+                end)
+            end)
+        end)
+    else
+        if batSpamConnection then
+            batSpamConnection:Disconnect()
+            batSpamConnection = nil
+        end
+    end
+end
+
+local function showBlacklistPopup()
+    local popup = Instance.new("Frame")
+    popup.Size = UDim2.new(0, 280, 0, 140)
+    popup.Position = UDim2.new(0.5, -140, 0.5, -70)
+    popup.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+    popup.BorderSizePixel = 0
+    popup.ZIndex = 100
+    popup.Parent = sg
+    
+    Instance.new("UICorner", popup).CornerRadius = UDim.new(0, 10)
+    
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 50, 50)
+    stroke.Thickness = 2
+    stroke.Parent = popup
+    
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, -20, 0, 35)
+    title.Position = UDim2.new(0, 10, 0, 10)
+    title.BackgroundTransparency = 1
+    title.Text = "⚠️ ACCESS DENIED"
+    title.TextColor3 = Color3.fromRGB(255, 100, 100)
+    title.TextSize = 16
+    title.Font = Enum.Font.GothamBold
+    title.Parent = popup
+    
+    local message = Instance.new("TextLabel")
+    message.Size = UDim2.new(1, -20, 0, 40)
+    message.Position = UDim2.new(0, 10, 0, 45)
+    message.BackgroundTransparency = 1
+    message.Text = "Your not allowed to use this!"
+    message.TextColor3 = Color3.fromRGB(255, 255, 255)
+    message.TextSize = 13
+    message.Font = Enum.Font.Gotham
+    message.TextWrapped = true
+    message.Parent = popup
+    
+    local closeButton = Instance.new("TextButton")
+    closeButton.Size = UDim2.new(0, 90, 0, 32)
+    closeButton.Position = UDim2.new(0.5, -45, 1, -40)
+    closeButton.BackgroundColor3 = Color3.fromRGB(255, 80, 80)
+    closeButton.BorderSizePixel = 0
+    closeButton.Text = "Close"
+    closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeButton.TextSize = 13
+    closeButton.Font = Enum.Font.GothamBold
+    closeButton.Parent = popup
+    
+    Instance.new("UICorner", closeButton).CornerRadius = UDim.new(0, 6)
+    
+    closeButton.MouseButton1Click:Connect(function()
+        popup:Destroy()
+    end)
+end
+
+local function toggleAntiDesync()
+    if blacklist[player.Name] then
+        showBlacklistPopup()
+        return
+    end
+    
+    antiDesyncEnabled = not antiDesyncEnabled
+    ab.Text = antiDesyncEnabled and "Anti-Desync: ON" or "Anti-Desync: OFF"
+    updateButton(ab, antiDesyncEnabled)
+    
+    if antiDesyncEnabled then
+        antiDesyncConnection = RunService.Heartbeat:Connect(function()
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= player and p.Character then
+                    task.spawn(function()
+                        pcall(function()
+                            local c = p.Character
+                            local h = c:FindFirstChild("HumanoidRootPart")
+                            
+                            if h then
+                                if not playerHistory[p.Name] then
+                                    playerHistory[p.Name] = {
+                                        lastPos = h.Position,
+                                        lastTime = tick(),
+                                        velocity = Vector3.new(0, 0, 0)
+                                    }
+                                end
+                                
+                                local history = playerHistory[p.Name]
+                                local currentTime = tick()
+                                local deltaTime = currentTime - history.lastTime
+                                
+                                if deltaTime > 0.05 then
+                                    local deltaPos = h.Position - history.lastPos
+                                    history.velocity = deltaPos / deltaTime
+                                    history.lastPos = h.Position
+                                    history.lastTime = currentTime
+                                end
+                                
+                                local predictedPos = h.Position + (history.velocity * 0.15)
+                                local isDesyncing = history.velocity.Magnitude > 80
+                                
+                                if isDesyncing then
+                                    if not antiDesyncMarkers[p.Name] then
+                                        local m = Instance.new("Part")
+                                        m.Name = "ActualPos"
+                                        m.Shape = Enum.PartType.Ball
+                                        m.Size = Vector3.new(2.5, 2.5, 2.5)
+                                        m.Material = Enum.Material.Neon
+                                        m.Color = Color3.fromRGB(255, 50, 100)
+                                        m.Anchored = true
+                                        m.CanCollide = false
+                                        m.Transparency = 0.4
+                                        m.Parent = workspace
+                                        
+                                        local b = Instance.new("BillboardGui")
+                                        b.Size = UDim2.new(0, 100, 0, 35)
+                                        b.StudsOffset = Vector3.new(0, 2, 0)
+                                        b.AlwaysOnTop = true
+                                        b.Parent = m
+                                        
+                                        local t = Instance.new("TextLabel")
+                                        t.Size = UDim2.new(1, 0, 1, 0)
+                                        t.BackgroundTransparency = 1
+                                        t.Text = "REAL POS"
+                                        t.TextColor3 = Color3.fromRGB(255, 100, 150)
+                                        t.TextSize = 14
+                                        t.Font = Enum.Font.GothamBold
+                                        t.TextStrokeTransparency = 0.3
+                                        t.Parent = b
+                                        
+                                        antiDesyncMarkers[p.Name] = m
+                                    end
+                                    
+                                    antiDesyncMarkers[p.Name].Position = predictedPos + Vector3.new(0, 1, 0)
+                                    
+                                    if not desyncBanners[p.Name] then
+                                        local count = 0
+                                        for _ in pairs(desyncBanners) do count = count + 1 end
+                                        
+                                        local bn = Instance.new("Frame")
+                                        bn.Size = UDim2.new(0, 200, 0, 30)
+                                        bn.Position = UDim2.new(0.5, -100, 0, 10 + (count * 35))
+                                        bn.BackgroundColor3 = Color3.fromRGB(255, 50, 100)
+                                        bn.BorderSizePixel = 0
+                                        bn.Parent = sg
+                                        
+                                        Instance.new("UICorner", bn).CornerRadius = UDim.new(0, 8)
+                                        
+                                        local bt = Instance.new("TextLabel")
+                                        bt.Size = UDim2.new(1, 0, 1, 0)
+                                        bt.BackgroundTransparency = 1
+                                        bt.Text = "⚠️ " .. p.Name .. " DESYNCING!"
+                                        bt.TextColor3 = Color3.fromRGB(255, 255, 255)
+                                        bt.TextSize = 12
+                                        bt.Font = Enum.Font.GothamBold
+                                        bt.Parent = bn
+                                        
+                                        desyncBanners[p.Name] = bn
+                                    end
+                                else
+                                    if antiDesyncMarkers[p.Name] then
+                                        antiDesyncMarkers[p.Name]:Destroy()
+                                        antiDesyncMarkers[p.Name] = nil
+                                    end
+                                    if desyncBanners[p.Name] then
+                                        desyncBanners[p.Name]:Destroy()
+                                        desyncBanners[p.Name] = nil
+                                    end
+                                end
+                            end
+                        end)
+                    end)
+                end
+            end
+        end)
+    else
+        if antiDesyncConnection then
+            antiDesyncConnection:Disconnect()
+            antiDesyncConnection = nil
+        end
+        
+        for _, m in pairs(antiDesyncMarkers) do
+            task.spawn(function() pcall(function() m:Destroy() end) end)
+        end
+        antiDesyncMarkers = {}
+        
+        for _, b in pairs(desyncBanners) do
+            task.spawn(function() pcall(function() b:Destroy() end) end)
+        end
+        desyncBanners = {}
+        
+        playerHistory = {}
+    end
+end
+
+-- Button connections
+db.MouseButton1Click:Connect(toggleDesync)
+eb.MouseButton1Click:Connect(toggleESP)
+ub.MouseButton1Click:Connect(toggleUnwalk)
+bb.MouseButton1Click:Connect(toggleBat)
+ab.MouseButton1Click:Connect(toggleAntiDesync)
+
+-- Minimize and close
+local min = false
+mb.MouseButton1Click:Connect(function()
+    min = not min
+    if min then
+        cf.Visible = false
+        TweenService:Create(mf, TweenInfo.new(0.2), {Size = UDim2.new(0, 220, 0, 40)}):Play()
+        mb.Text = "+"
+    else
+        cf.Visible = true
+        TweenService:Create(mf, TweenInfo.new(0.2), {Size = UDim2.new(0, 220, 0, 240)}):Play()
+        mb.Text = "─"
+    end
+end)
+
+cb.MouseButton1Click:Connect(function()
+    sg:Destroy()
+end)
+
+-- Character respawn handler
+player.CharacterAdded:Connect(function(nc)
+    character = nc
+    humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+    humanoid = character:WaitForChild("Humanoid")
+    
+    if unwalkEnabled then
+        unwalkEnabled = false
+        toggleUnwalk()
+    end
+    if batSpamEnabled then
+        batSpamEnabled = false
+        toggleBat()
+    end
+    if desyncEnabled then
+        task.spawn(function()
+            pcall(function()
+                if serverPosMarker then
+                    serverPosMarker:Destroy()
+                    serverPosMarker = nil
+                end
+            end)
+            task.wait(0.5)
+            createServerPosMarker()
+        end)
+    end
+end)
